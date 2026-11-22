@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 # MSAL adds the reserved scopes (openid, profile, offline_access) on its own.
-GRAPH_SCOPES = ["Calendars.ReadWrite", "Tasks.ReadWrite", "Mail.Read", "User.Read"]
+GRAPH_SCOPES = ["Calendars.ReadWrite", "Tasks.ReadWrite", "Mail.Read", "Notes.ReadWrite", "User.Read"]
 DEFAULT_TENANT = "common"
 REQUEST_TIMEOUT_S = 15.0
 
@@ -192,19 +192,42 @@ class GraphClient:
         self._timezone_name = timezone_name
 
     def get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        return self._request("GET", path, params=params)
+        return self._json(self._send("GET", path, params=params))
+
+    def get_text(self, path: str, params: dict[str, Any] | None = None) -> str:
+        """GET a non-JSON resource, e.g. the HTML body of a OneNote page."""
+        return self._send("GET", path, params=params).text
 
     def post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
-        return self._request("POST", path, json_body=body)
+        return self._json(self._send("POST", path, json_body=body))
 
-    def _request(
+    def post_html(self, path: str, html: str) -> dict[str, Any]:
+        """POST an HTML document (OneNote page creation)."""
+        response = self._send(
+            "POST", path, content=html.encode("utf-8"), content_type="text/html; charset=utf-8"
+        )
+        return self._json(response)
+
+    def patch(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        return self._json(self._send("PATCH", path, json_body=body))
+
+    def delete(self, path: str) -> None:
+        self._send("DELETE", path)
+
+    @staticmethod
+    def _json(response: httpx.Response) -> dict[str, Any]:
+        return dict(response.json()) if response.content else {}
+
+    def _send(
         self,
         method: str,
         path: str,
         *,
         params: dict[str, Any] | None = None,
         json_body: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+        content: bytes | None = None,
+        content_type: str | None = None,
+    ) -> httpx.Response:
         token = self._auth.acquire_token_silent()
         if token is None:
             raise GraphAuthError(NOT_SIGNED_IN_MESSAGE)
@@ -213,10 +236,17 @@ class GraphClient:
             # Return calendar times in the user's timezone instead of UTC.
             "Prefer": f'outlook.timezone="{self._timezone_name}"',
         }
+        if content_type:
+            headers["Content-Type"] = content_type
         try:
             with httpx.Client(timeout=REQUEST_TIMEOUT_S) as client:
                 response = client.request(
-                    method, f"{GRAPH_BASE_URL}{path}", headers=headers, params=params, json=json_body
+                    method,
+                    f"{GRAPH_BASE_URL}{path}",
+                    headers=headers,
+                    params=params,
+                    json=json_body,
+                    content=content,
                 )
         except httpx.HTTPError as exc:
             logger.error("Graph request %s %s failed: %s", method, path, exc)
@@ -225,7 +255,7 @@ class GraphClient:
         if response.status_code >= 400:
             logger.error("Graph %s %s -> HTTP %s: %s", method, path, response.status_code, response.text[:300])
             raise ToolError(_message_for_status(response.status_code))
-        return dict(response.json()) if response.content else {}
+        return response
 
 
 def _message_for_status(status: int) -> str:

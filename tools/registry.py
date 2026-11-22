@@ -42,11 +42,23 @@ class ToolRegistry:
         if tool.name in self._tools:
             raise ValueError(f"Duplicate tool name: {tool.name!r}")
         self._tools[tool.name] = tool
+        tool.registry = self
         logger.info("Registered tool %r", tool.name)
 
+    def has(self, name: str) -> bool:
+        """Whether a tool with this name is registered."""
+        return name in self._tools
+
     def anthropic_schemas(self) -> list[ToolParam]:
-        """Return all tool definitions for the Anthropic ``tools`` parameter."""
-        return [tool.to_anthropic_schema() for tool in self._tools.values()]
+        """Return all tool definitions for the Anthropic ``tools`` parameter.
+
+        The last definition carries a cache breakpoint so the (long) tool list is cached
+        between requests and does not slow down every turn.
+        """
+        schemas = [tool.to_anthropic_schema() for tool in self._tools.values()]
+        if schemas:
+            schemas[-1] = {**schemas[-1], "cache_control": {"type": "ephemeral"}}
+        return schemas
 
     def execute(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Run a tool and always return a dict. Failures become ``{"error": ...}``.

@@ -7,3 +7,6 @@ data.json
 data.json.tmp
 .msal_cache.json
 .msal_cache.json.tmp
+token_google.json
+token_google.json.tmp
+credentials.json

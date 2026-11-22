@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal
 from zoneinfo import ZoneInfo
@@ -14,6 +15,7 @@ from pipeline.brain import CasperBrain
 from pipeline.errors import CasperError, ConfigurationError, TranscriptionError
 from pipeline.stt import FasterWhisperSpeechToText, SpeechToText
 from pipeline.tts import EdgeSpeechSynthesizer, SpeechSynthesizer
+from pipeline.wake import detect_wake_word
 from tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -36,6 +38,15 @@ class PipelineResult:
     response_text: str
     audio: bytes
     media_type: str
+
+
+@dataclass(frozen=True, slots=True)
+class WakeCheck:
+    """Result of the wake-word check on a short speech segment."""
+
+    detected: bool
+    transcript: str
+    command: str
 
 
 class VoicePipeline:
@@ -64,13 +75,53 @@ class VoicePipeline:
         """Preload the speech model so the first utterance is not slow."""
         await self._stt.warm_up()
 
-    async def process(self, audio: bytes, filename: str) -> PipelineResult:
-        """Transcribe, reason and synthesise. Only a TTS failure is raised to the caller."""
+    async def process(self, audio: bytes, filename: str, *, strip_wake: bool = False) -> PipelineResult:
+        """Audio in, spoken reply out. ``strip_wake`` removes a leading "Hallo Casper"."""
+
+        async def transcribe() -> str:
+            transcript = await self._stt.transcribe(audio, filename)
+            if strip_wake:
+                wake = detect_wake_word(transcript)
+                if wake.detected:
+                    transcript = wake.command
+            return transcript
+
+        return await self._answer(transcribe)
+
+    async def process_text(self, text: str) -> PipelineResult:
+        """Text in (already transcribed), spoken reply out."""
+
+        async def passthrough() -> str:
+            return text.strip()
+
+        return await self._answer(passthrough)
+
+    async def speak(self, text: str) -> PipelineResult:
+        """Speak ``text`` as is (timer and alarm announcements). Only TTS is involved."""
+        audio = await self._tts.synthesize(text)
+        return PipelineResult("ok", "", text, audio, self._tts.media_type)
+
+    async def check_wake_word(self, audio: bytes, filename: str) -> WakeCheck:
+        """Quickly transcribe a short segment and look for the wake word. Never raises."""
+        try:
+            transcript = await self._stt.transcribe(audio, filename, quick=True)
+        except CasperError as exc:
+            logger.warning("Wake check skipped: %s", exc.spoken_message)
+            return WakeCheck(False, "", "")
+        except Exception:
+            logger.exception("Wake check failed")
+            return WakeCheck(False, "", "")
+        result = detect_wake_word(transcript)
+        logger.info("Wake check: %r -> %s", transcript, "WAKE" if result.detected else "ignored")
+        return WakeCheck(result.detected, transcript, result.command)
+
+    async def _answer(self, get_transcript: Callable[[], Awaitable[str]]) -> PipelineResult:
+        """Transcribe, reason, synthesise. Only a TTS failure is raised to the caller."""
         transcript = ""
         status: Literal["ok", "error"] = "ok"
         try:
             self._ensure_configured()
-            transcript = await self._stt.transcribe(audio, filename)
+            transcript = await get_transcript()
             if not transcript:
                 raise TranscriptionError(EMPTY_TRANSCRIPT)
             logger.info("Transcript: %s", transcript)

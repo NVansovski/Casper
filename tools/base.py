@@ -23,6 +23,9 @@ class BaseTool(ABC):
     description: ClassVar[str]
     input_schema: ClassVar[dict[str, Any]]
 
+    #: Set by :meth:`ToolRegistry.register`. Lets a tool call its siblings (daily briefing).
+    registry: Any = None
+
     @abstractmethod
     def run(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Execute the tool synchronously and return a JSON-serialisable result.

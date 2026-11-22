@@ -14,6 +14,8 @@ from pipeline.errors import TranscriptionError
 logger = logging.getLogger(__name__)
 
 BEAM_SIZE = 5
+QUICK_BEAM_SIZE = 1
+HOTWORDS = "Casper"  # nudges the decoder towards the assistant's name
 
 
 class SpeechToText(ABC):
@@ -23,8 +25,11 @@ class SpeechToText(ABC):
         """Load models ahead of the first request. Safe to skip."""
 
     @abstractmethod
-    async def transcribe(self, audio: bytes, filename: str) -> str:
-        """Return the transcript of ``audio``. ``filename`` carries the format extension."""
+    async def transcribe(self, audio: bytes, filename: str, *, quick: bool = False) -> str:
+        """Return the transcript of ``audio``. ``filename`` carries the format extension.
+
+        ``quick`` trades accuracy for speed (used for the wake-word check).
+        """
 
 
 class FasterWhisperSpeechToText(SpeechToText):
@@ -49,9 +54,9 @@ class FasterWhisperSpeechToText(SpeechToText):
     async def warm_up(self) -> None:
         await asyncio.to_thread(self._load_model)
 
-    async def transcribe(self, audio: bytes, filename: str) -> str:
+    async def transcribe(self, audio: bytes, filename: str, *, quick: bool = False) -> str:
         try:
-            return await asyncio.to_thread(self._transcribe_blocking, audio)
+            return await asyncio.to_thread(self._transcribe_blocking, audio, quick)
         except TranscriptionError:
             raise
         except Exception as exc:
@@ -79,14 +84,15 @@ class FasterWhisperSpeechToText(SpeechToText):
                     ) from exc
             return self._model
 
-    def _transcribe_blocking(self, audio: bytes) -> str:
+    def _transcribe_blocking(self, audio: bytes, quick: bool) -> str:
         model = self._load_model()
         with self._lock:
             segments, _info = model.transcribe(
                 io.BytesIO(audio),
                 language=self._language,
-                beam_size=BEAM_SIZE,
+                beam_size=QUICK_BEAM_SIZE if quick else BEAM_SIZE,
                 vad_filter=True,
+                hotwords=HOTWORDS,
             )
             # ``segments`` is a lazy generator: decoding happens while iterating.
             return " ".join(segment.text.strip() for segment in segments).strip()

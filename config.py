@@ -45,6 +45,14 @@ class Settings(BaseSettings):
     ms_tenant_id: str = ""
     msal_cache_file: Path = PROJECT_ROOT / ".msal_cache.json"
 
+    # Google (optional Gmail integration). Without credentials.json the Gmail tools stay off.
+    google_credentials_file: Path = PROJECT_ROOT / "credentials.json"
+    google_token_file: Path = PROJECT_ROOT / "token_google.json"
+
+    # Web search, transit
+    search_region: str = "de-de"
+    transit_api_url: str = "https://v6.db.transport.rest"
+
     # Local runtime
     timezone: str = "Europe/Berlin"
     data_file: Path = PROJECT_ROOT / "data.json"
