@@ -13,12 +13,12 @@ talks to the same backend over the local Wi-Fi.
 ```
  client.py (laptop)                       server.py (FastAPI)
  ┌──────────────────┐   POST /process-audio   ┌───────────────────────────────────────────┐
- │ mic → WAV        │ ──────────────────────▶ │ STT  (OpenAI Whisper, whisper-1, de)      │
+ │ mic → WAV        │ ──────────────────────▶ │ STT  (local faster-whisper, de, int8)     │
  │ speaker ◀ audio  │ ◀────────────────────── │   ↓ transcript                            │
  └──────────────────┘   audio + headers       │ Brain (Anthropic Claude, native tool use) │
                                               │   ↕ ToolRegistry → tools/*.py             │
                                               │   ↓ German reply text                     │
-                                              │ TTS  (OpenAI tts-1, voice onyx)           │
+                                              │ TTS  (edge-tts, de-DE-ConradNeural, MP3)  │
                                               └───────────────────────────────────────────┘
 ```
 
@@ -29,9 +29,9 @@ talks to the same backend over the local Wi-Fi.
 | `server.py` | FastAPI app: `POST /process-audio` and `GET /health` |
 | `client.py` | CLI test client: record, send, play back |
 | `config.py` | `pydantic-settings` configuration from `.env` and the environment |
-| `pipeline/stt.py` | `SpeechToText` interface and the Whisper implementation |
+| `pipeline/stt.py` | `SpeechToText` interface and the local `faster-whisper` implementation |
 | `pipeline/brain.py` | `CasperBrain`: German persona, Claude tool loop, parallel tool calls |
-| `pipeline/tts.py` | `SpeechSynthesizer` interface and the OpenAI TTS implementation |
+| `pipeline/tts.py` | `SpeechSynthesizer` interface and the `edge-tts` implementation |
 | `pipeline/orchestrator.py` | `VoicePipeline`: STT → brain → TTS, with spoken error handling |
 | `pipeline/errors.py` | `CasperError` family; every message is German and spoken |
 | `tools/base.py` | `BaseTool` interface and `ToolError` |
@@ -48,7 +48,7 @@ talks to the same backend over the local Wi-Fi.
 Casper never answers with a stack trace. Failures become spoken German replies:
 
 - **Missing API key or unreachable service:** the reply names the problem
-  ("Ich kann die Spracherkennung gerade nicht erreichen. Prüf bitte die Internetverbindung.").
+  ("Ich kann mein Sprachmodell gerade nicht erreichen. Prüf bitte die Internetverbindung.").
 - **Silence or unintelligible audio:** "Ich habe leider nichts verstanden."
 - **Tool failure** (e.g. no matching presentation): the tool returns an error
   object and Claude explains it in German.
@@ -95,9 +95,18 @@ logged and skipped, and the rest still load. Check the startup log for
 ### 1. Prerequisites
 
 - Python 3.11 or newer (3.13 tested)
-- An Anthropic API key and an OpenAI API key
+- An Anthropic API key. It is the only key needed: speech recognition runs
+  locally and the voice comes from `edge-tts`.
+- Internet access. Claude and `edge-tts` are online services, and the
+  speech model is downloaded once.
 - **Linux only:** PortAudio for the microphone and speakers, for example
   `sudo apt install libportaudio2`. Windows and macOS wheels include it.
+
+**First start:** `faster-whisper` downloads its model on first launch (about
+0.5 GB for `small`, 0.15 GB for `base`) and caches it. The backend loads it at
+startup, so wait for the "backend ready" log line before speaking. Set
+`STT_MODEL=base` in `.env` for faster, slightly less accurate recognition on
+weak CPUs. The reply is MP3, which the client decodes with `soundfile`.
 
 ### 2. Install
 
@@ -113,7 +122,6 @@ cp .env.example .env               # Windows: copy .env.example .env
 Open `.env` and set at least:
 
 - `ANTHROPIC_API_KEY`
-- `OPENAI_API_KEY`
 - `PPTX_SEARCH_DIR`, if you want the presentation tool (the folder is searched recursively)
 - `DEFAULT_CITY`, if not Frankfurt am Main
 
@@ -181,5 +189,7 @@ factories. The LLM-facing tool definitions do not change.
   has no authentication yet.
 - The PowerPoint tool opens files on the machine that runs the backend. On a
   headless server it can find a file but cannot open it.
-- The STT and TTS classes are interfaces. A local `faster-whisper` engine only
-  needs a new `SpeechToText` subclass and a change in `build_pipeline`.
+- The STT and TTS classes are interfaces. Another engine only needs a new
+  `SpeechToText` or `SpeechSynthesizer` subclass and a change in `build_pipeline`.
+- `edge-tts` uses Microsoft's online Edge voices without a key. It is an
+  unofficial interface, so it may change or be rate-limited.

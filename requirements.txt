@@ -9,9 +9,14 @@ pydantic-settings==2.7.0
 python-dotenv==1.0.1
 tzdata==2024.2
 
-# AI services
+# Reasoning (the only service that needs an API key)
 anthropic==0.42.0
-openai==1.58.1
+
+# Local speech: faster-whisper (STT) and edge-tts (TTS), no API keys
+faster-whisper==1.2.1
+# PyAV 15+ removed an argument faster-whisper still passes when decoding audio.
+av==14.0.1
+edge-tts==7.0.2
 
 # HTTP client (weather tool, client.py)
 httpx==0.28.1

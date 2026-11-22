@@ -45,12 +45,15 @@ def detect_audio_format(data: bytes) -> str | None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
-    if not settings.openai_api_key:
-        logger.warning("OPENAI_API_KEY is not set: speech recognition and synthesis will fail.")
     if not settings.anthropic_api_key:
         logger.warning("ANTHROPIC_API_KEY is not set: reasoning will fail.")
 
     app.state.pipeline = build_pipeline(settings)
+    try:
+        await app.state.pipeline.warm_up()
+    except CasperError as exc:
+        # Not fatal: the model is retried on the first request.
+        logger.warning("Speech model not ready yet: %s", exc.spoken_message)
     logger.info("%s backend ready. Tools: %s", settings.assistant_name, ", ".join(app.state.pipeline.tool_names))
     yield
     await app.state.pipeline.aclose()
@@ -74,7 +77,8 @@ async def health(request: Request) -> dict[str, Any]:
         "assistant": settings.assistant_name,
         "tools": _pipeline(request).tool_names,
         "anthropic_key_configured": bool(settings.anthropic_api_key),
-        "openai_key_configured": bool(settings.openai_api_key),
+        "stt_model": f"faster-whisper:{settings.stt_model}",
+        "tts_voice": settings.tts_voice,
     }
 
 

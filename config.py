@@ -26,13 +26,14 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-haiku-5-5"
     anthropic_max_tokens: int = 1024
 
-    # OpenAI (speech-to-text and text-to-speech)
-    openai_api_key: str = ""
-    stt_model: str = "whisper-1"
+    # Local speech-to-text (faster-whisper); the model downloads on first run
+    stt_model: str = "small"
+    stt_device: str = "cpu"
+    stt_compute_type: str = "int8"
     stt_language: str = "de"
-    tts_model: str = "tts-1"
-    tts_voice: str = "onyx"
-    tts_response_format: str = "wav"
+
+    # Text-to-speech (edge-tts, MP3 output)
+    tts_voice: str = "de-DE-ConradNeural"
 
     # Tool configuration
     default_city: str = "Frankfurt am Main"
