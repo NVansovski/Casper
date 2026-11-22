@@ -1,0 +1,22 @@
+# Web server
+fastapi==0.115.6
+uvicorn==0.32.1
+python-multipart==0.0.20
+
+# Configuration and validation
+pydantic==2.10.3
+pydantic-settings==2.7.0
+python-dotenv==1.0.1
+tzdata==2024.2
+
+# AI services
+anthropic==0.42.0
+openai==1.58.1
+
+# HTTP client (weather tool, client.py)
+httpx==0.28.1
+
+# Laptop test client audio I/O
+sounddevice==0.5.1
+soundfile==0.12.1
+numpy==2.2.1
