@@ -18,8 +18,11 @@ faster-whisper==1.2.1
 av==14.0.1
 edge-tts==7.0.2
 
-# HTTP client (weather tool, client.py)
+# HTTP client (weather and Graph tools, client.py)
 httpx==0.28.1
+
+# Microsoft account sign-in (device code flow, persistent token cache)
+msal==1.39.0
 
 # Laptop test client audio I/O
 sounddevice==0.5.1

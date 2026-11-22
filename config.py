@@ -36,17 +36,24 @@ class Settings(BaseSettings):
     tts_voice: str = "de-DE-ConradNeural"
 
     # Tool configuration
-    default_city: str = "Frankfurt am Main"
+    default_city: str = "Ulm"
     pptx_search_dir: str = ""
 
-    # Microsoft Graph (reserved for the future migration away from the mocks)
+    # Microsoft Graph. With MS_CLIENT_ID set, the real calendar, To Do and mail tools
+    # replace the local mock tools. MS_TENANT_ID may be empty ("common") for most accounts.
     ms_client_id: str = ""
     ms_tenant_id: str = ""
+    msal_cache_file: Path = PROJECT_ROOT / ".msal_cache.json"
 
     # Local runtime
     timezone: str = "Europe/Berlin"
     data_file: Path = PROJECT_ROOT / "data.json"
     max_upload_bytes: int = 20 * 1024 * 1024
+
+    @property
+    def graph_enabled(self) -> bool:
+        """True when a Microsoft app registration is configured."""
+        return bool(self.ms_client_id.strip())
 
 
 @lru_cache(maxsize=1)

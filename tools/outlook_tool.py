@@ -11,13 +11,14 @@ from __future__ import annotations
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, tzinfo
+from datetime import datetime, time, timedelta, tzinfo
 from typing import Any, ClassVar
 from zoneinfo import ZoneInfo
 
 from config import get_settings
 from tools.base import BaseTool, ToolError
 from tools.data_store import JsonDataStore, get_data_store
+from tools.time_utils import clamp_int, parse_date, parse_datetime
 
 DEFAULT_EVENT_DURATION = timedelta(hours=1)
 MAX_EVENT_RANGE_DAYS = 14
@@ -189,8 +190,8 @@ class OutlookTool(BaseTool):
         raise ToolError("Diese Outlook-Aktion kenne ich nicht.")
 
     def _list_events(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        day = _parse_date(arguments.get("date"), self._timezone)
-        days = _clamp_int(arguments.get("days"), default=1, low=1, high=MAX_EVENT_RANGE_DAYS)
+        day = parse_date(arguments.get("date"), self._timezone)
+        days = clamp_int(arguments.get("days"), default=1, low=1, high=MAX_EVENT_RANGE_DAYS)
         start = datetime.combine(day, time.min, tzinfo=self._timezone)
         end = start + timedelta(days=days)
         events = self._backend.list_events(start, end)
@@ -205,10 +206,10 @@ class OutlookTool(BaseTool):
         subject = str(arguments.get("subject", "")).strip()
         if not subject:
             raise ToolError("Wie soll der Termin heißen?")
-        start = _parse_datetime(arguments.get("start"), self._timezone)
+        start = parse_datetime(arguments.get("start"), self._timezone)
         end_value = arguments.get("end")
         end = (
-            _parse_datetime(end_value, self._timezone)
+            parse_datetime(end_value, self._timezone)
             if end_value
             else start + DEFAULT_EVENT_DURATION
         )
@@ -219,7 +220,7 @@ class OutlookTool(BaseTool):
         return {"status": "created", "event": self._describe_event(event)}
 
     def _list_unread_emails(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        limit = _clamp_int(arguments.get("limit"), default=5, low=1, high=MAX_MESSAGES)
+        limit = clamp_int(arguments.get("limit"), default=5, low=1, high=MAX_MESSAGES)
         messages = self._backend.list_messages(unread_only=True, limit=limit)
         return {
             "count": len(messages),
@@ -243,31 +244,8 @@ class OutlookTool(BaseTool):
         }
 
 
-def _parse_date(value: Any, timezone: tzinfo) -> date:
-    if not value:
-        return datetime.now(timezone).date()
-    try:
-        return datetime.fromisoformat(str(value)).date()
-    except ValueError as exc:
-        raise ToolError("Das Datum konnte ich leider nicht lesen.") from exc
-
-
-def _parse_datetime(value: Any, timezone: tzinfo) -> datetime:
-    try:
-        parsed = datetime.fromisoformat(str(value))
-    except (TypeError, ValueError) as exc:
-        raise ToolError("Die Uhrzeit konnte ich leider nicht lesen.") from exc
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone)
-
-
-def _clamp_int(value: Any, *, default: int, low: int, high: int) -> int:
-    try:
-        number = int(value) if value is not None else default
-    except (TypeError, ValueError):
-        number = default
-    return max(low, min(high, number))
-
-
-def create_tool() -> BaseTool:
-    """Factory used by the tool registry."""
+def create_tool() -> BaseTool | None:
+    """Factory used by the tool registry. Disabled when the real Microsoft tools are active."""
+    if get_settings().graph_enabled:
+        return None
     return OutlookTool(LocalOutlookBackend(get_data_store()), ZoneInfo(get_settings().timezone))

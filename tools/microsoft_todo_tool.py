@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, ClassVar
 
+from config import get_settings
 from tools.base import BaseTool, ToolError
 from tools.data_store import JsonDataStore, get_data_store
 from tools.text_matching import best_match
@@ -259,6 +260,8 @@ def _resolve_list_alias(alias: str) -> str:
         raise ToolError("Ich kenne nur die Einkaufsliste und die Aufgabenliste.") from exc
 
 
-def create_tool() -> BaseTool:
-    """Factory used by the tool registry."""
+def create_tool() -> BaseTool | None:
+    """Factory used by the tool registry. Disabled when the real Microsoft tools are active."""
+    if get_settings().graph_enabled:
+        return None
     return MicrosoftTodoTool(LocalTodoBackend(get_data_store()))

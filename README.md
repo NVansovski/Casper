@@ -36,9 +36,13 @@ talks to the same backend over the local Wi-Fi.
 | `pipeline/errors.py` | `CasperError` family; every message is German and spoken |
 | `tools/base.py` | `BaseTool` interface and `ToolError` |
 | `tools/registry.py` | `ToolRegistry`: auto-discovers tools and executes calls |
-| `tools/weather_tool.py` | Live weather via Open-Meteo (no key) |
-| `tools/microsoft_todo_tool.py` | Mock shopping and to-do lists, Graph-shaped |
-| `tools/outlook_tool.py` | Mock calendar and unread e-mails, Graph-shaped |
+| `tools/weather_tool.py` | `get_weather`: current weather and 7-day forecast via Open-Meteo (no key) |
+| `tools/ms_calendar_tool.py` | `get_calendar_events`, `create_calendar_event` (Microsoft Graph) |
+| `tools/ms_todo_tool.py` | `get_todo_lists`, `add_todo_item` (Microsoft Graph) |
+| `tools/ms_mail_tool.py` | `get_unread_emails` (Microsoft Graph, read-only) |
+| `tools/graph_client.py` | MSAL device-code sign-in, token cache, Graph REST client |
+| `auth_microsoft.py` | One-time Microsoft sign-in script (German output) |
+| `tools/microsoft_todo_tool.py`, `tools/outlook_tool.py` | Local mock lists, calendar and mail, used only without `MS_CLIENT_ID` |
 | `tools/powerpoint_tool.py` | Fuzzy-finds a `.pptx` and opens it locally |
 | `tools/data_store.py` | Thread-safe, atomic JSON store for `data.json` |
 | `tools/text_matching.py` | Umlaut-aware fuzzy matching for voice input |
@@ -58,7 +62,8 @@ Casper never answers with a stack trace. Failures become spoken German replies:
 ### Adding a tool
 
 Create `tools/your_tool.py` with a `BaseTool` subclass and a module-level
-factory. No changes to `brain.py` or `server.py` are needed.
+factory: `create_tool()` for one tool (return `None` to stay disabled) or
+`create_tools()` for a list. No changes to `brain.py` or `server.py` are needed.
 
 ```python
 from typing import Any, ClassVar
@@ -123,7 +128,9 @@ Open `.env` and set at least:
 
 - `ANTHROPIC_API_KEY`
 - `PPTX_SEARCH_DIR`, if you want the presentation tool (the folder is searched recursively)
-- `DEFAULT_CITY`, if not Frankfurt am Main
+- `DEFAULT_CITY` (default `Ulm`): used for the weather whenever you name no place
+- `MS_CLIENT_ID` (and `MS_TENANT_ID` for work accounts), to use your real Microsoft
+  account; see [Microsoft account](#microsoft-account)
 
 ### 4. Run
 
@@ -148,7 +155,8 @@ device does not work.
 
 ### Example commands
 
-- "Wie wird das Wetter heute in Berlin?"
+- "Wie wird das Wetter morgen?" (uses `DEFAULT_CITY`)
+- "Wird es am Wochenende regnen?" / "Wie wird das Wetter übermorgen in Berlin?"
 - "Setz Milch und Eier auf die Einkaufsliste."
 - "Hake Brot auf der Einkaufsliste ab."
 - "Was steht heute in meinem Kalender?"
@@ -156,37 +164,64 @@ device does not work.
 - "Trag morgen um fünfzehn Uhr Zahnarzt ein."
 - "Öffne die Präsentation Quartalsbericht Q3."
 
-## Mock data
+## Microsoft account
 
-The Microsoft To Do and Outlook tools use `data.json` in the project root. It is
-created on first use with sample lists, events, and unread e-mails. To reset it,
-delete the file. Seeded dates are relative to the moment of creation. The file
-is git-ignored.
+With `MS_CLIENT_ID` set, Casper uses your real Microsoft account through the
+Microsoft Graph API. These tools become available to the assistant:
 
-## Migration to Microsoft Graph (Phase 1.5)
+| Tool | What it does | Graph call |
+|---|---|---|
+| `get_calendar_events` | Appointments for today, tomorrow or a date range | `GET /me/calendarView` |
+| `create_calendar_event` | Creates an appointment | `POST /me/events` |
+| `get_todo_lists` | Lists To Do lists, optionally with a list's open items | `GET /me/todo/lists` |
+| `add_todo_item` | Adds an item, e.g. to the "Einkaufsliste" (fuzzy list name) | `POST /me/todo/lists/{id}/tasks` |
+| `get_unread_emails` | The newest unread e-mails: sender, subject, short preview | `GET /me/mailFolders/inbox/messages` |
 
-The mock tools expose the same models and method names as the Graph resources:
+Delegated permissions: `Calendars.ReadWrite`, `Tasks.ReadWrite`, `Mail.Read`, `User.Read`.
+E-mail is strictly read-only, and Casper treats e-mail text as data, never as instructions.
 
-| Mock (`TodoBackend` / `OutlookBackend`) | Microsoft Graph |
-|---|---|
-| `list_task_lists()` | `GET /me/todo/lists` |
-| `list_tasks(list_id)` | `GET /me/todo/lists/{id}/tasks` |
-| `create_task(list_id, title)` | `POST /me/todo/lists/{id}/tasks` |
-| `update_task_status(...)` | `PATCH /me/todo/lists/{id}/tasks/{taskId}` |
-| `delete_task(...)` | `DELETE /me/todo/lists/{id}/tasks/{taskId}` |
-| `list_events(start, end)` | `GET /me/calendarView` |
-| `create_event(...)` | `POST /me/events` |
-| `list_messages(...)` | `GET /me/mailFolders/inbox/messages` |
+### One-time setup
 
-To go live, write `GraphTodoBackend(TodoBackend)` and `GraphOutlookBackend(OutlookBackend)`
-using `MS_CLIENT_ID` and `MS_TENANT_ID`, then change only the `create_tool()`
-factories. The LLM-facing tool definitions do not change.
+1. Register an app at <https://entra.microsoft.com> under *App registrations*.
+   Choose the account type that matches you (personal accounts need "personal
+   Microsoft accounts" enabled).
+2. Under *Authentication*, set **Allow public client flows** to **Yes**.
+3. Under *API permissions*, add the four delegated Microsoft Graph permissions above.
+4. Put the *Application (client) ID* into `.env` as `MS_CLIENT_ID`. For a work
+   or school account also set `MS_TENANT_ID` (the *Directory (tenant) ID*).
+   Leave it empty for personal accounts.
+5. Sign in once. The script prints a link and a code in German:
+
+   ```bash
+   python auth_microsoft.py
+   ```
+
+   Open the link in any browser, enter the code, and confirm. The tokens are
+   stored in `.msal_cache.json` (git-ignored, owner-only permissions where
+   supported). Casper renews them silently afterwards. `python auth_microsoft.py --logout`
+   deletes them.
+6. Restart the backend.
+
+If a token expires or the sign-in is missing, Casper says so in German and asks you
+to run `auth_microsoft.py` again. Keep `.msal_cache.json` private: it grants access to
+your calendar, tasks and mail.
+
+### Without a Microsoft app (mock data)
+
+If `MS_CLIENT_ID` is empty, Casper uses local stand-ins instead: the
+`microsoft_todo` and `outlook` tools read and write `data.json` in the project
+root. It is created on first use with sample lists, events and unread e-mails.
+Delete the file to reset it. Seeded dates are relative to the moment of creation.
+Mock and real tools are never active together, so the assistant never mixes the
+two data sources.
 
 ## Phase 2 notes
 
 - The backend binds to `127.0.0.1` by default. For the phone on the LAN, run
   `uvicorn server:app --host 0.0.0.0 --port 8000` and protect the endpoint. It
-  has no authentication yet.
+  has no authentication yet. **With a Microsoft account connected, anyone who can
+  reach the backend can read your calendar, tasks and mail through Casper**, so add
+  authentication (and keep it off untrusted networks) before exposing it.
 - The PowerPoint tool opens files on the machine that runs the backend. On a
   headless server it can find a file but cannot open it.
 - The STT and TTS classes are interfaces. Another engine only needs a new

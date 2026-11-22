@@ -1,7 +1,8 @@
 """Dynamic tool registry: discovers tool modules and dispatches LLM tool calls.
 
 Adding a tool requires only a new module in the ``tools`` package that exposes a
-parameterless ``create_tool()`` function returning a :class:`BaseTool`.
+parameterless ``create_tool()`` (one :class:`BaseTool`, or ``None`` to stay disabled) or
+``create_tools()`` (a list of tools) function.
 """
 
 from __future__ import annotations
@@ -19,7 +20,8 @@ from tools.base import BaseTool, ToolError
 logger = logging.getLogger(__name__)
 
 TOOLS_PACKAGE = "tools"
-FACTORY_NAME = "create_tool"
+FACTORY_NAME = "create_tool"  # returns one tool, or None to stay disabled
+MULTI_FACTORY_NAME = "create_tools"  # returns any number of tools (possibly none)
 
 
 class ToolRegistry:
@@ -83,11 +85,23 @@ class ToolRegistry:
             except Exception:
                 logger.exception("Could not import tool module %s; skipping", module_name)
                 continue
-            factory = getattr(module, FACTORY_NAME, None)
-            if factory is None:
-                continue
             try:
-                registry.register(factory())
+                for tool in _tools_from_module(module):
+                    registry.register(tool)
             except Exception:
-                logger.exception("Could not create tool from %s; skipping", module_name)
+                logger.exception("Could not create tools from %s; skipping", module_name)
         return registry
+
+
+def _tools_from_module(module: Any) -> list[BaseTool]:
+    """Call ``create_tool`` and/or ``create_tools`` of a module, if it defines them."""
+    tools: list[BaseTool] = []
+    single = getattr(module, FACTORY_NAME, None)
+    if single is not None:
+        tool = single()
+        if tool is not None:
+            tools.append(tool)
+    many = getattr(module, MULTI_FACTORY_NAME, None)
+    if many is not None:
+        tools.extend(many())
+    return tools
